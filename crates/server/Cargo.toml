@@ -1,0 +1,14 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+engine_core = { path = "../engine_core" }
+core_types = { path = "../core_types" }
+physics = { path = "../physics" }
+world_gen = { path = "../world_gen" }
+net = { path = "../net" }
+mod_api = { path = "../mod_api" }
+
+rkyv = { version = "0.7", features = ["validation"] }

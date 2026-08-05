@@ -1,0 +1,9 @@
+[package]
+name = "render_pipeline"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core_types = { path = "../core_types" }
+engine_core = { path = "../engine_core" }
+voxel_mesh = { path = "../voxel_mesh" }

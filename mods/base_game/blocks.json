@@ -1,0 +1,7 @@
+{
+  "namespace": "base",
+  "blocks": [
+    { "id": "dirt", "textures": ["dirt"] },
+    { "id": "stone", "textures": ["stone"] }
+  ]
+}
