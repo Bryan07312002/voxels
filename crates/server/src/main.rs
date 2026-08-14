@@ -23,7 +23,6 @@ impl VoxelServer {
         println!("Voxel UDP Server active!");
 
         loop {
-            // Receive reassembled, aligned bytes directly from channel
             let (aligned_bytes, sender_addr) = match self.channel.recv_raw_payload() {
                 Ok(res) => res,
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
@@ -34,9 +33,7 @@ impl VoxelServer {
                 }
             };
 
-            // Inspect zero-copy rkyv archived root
             if let Ok(archived) = check_archived_root::<ClientPacket>(&aligned_bytes) {
-                // Pass SocketAddr directly without string formatting allocations
                 self.handle_packet(archived, sender_addr);
             }
         }
@@ -45,16 +42,11 @@ impl VoxelServer {
     fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
         match packet {
             ArchivedClientPacket::RequestChunk { x, y, z } => {
-                // Convert archived types safely to native primitives
                 let (x, y, z) = (*x, *y, *z);
                 println!("📥 [Server] RequestChunk [{x}, {y}, {z}] from {sender}");
 
                 let chunk = self.generator.generate_chunk(ChunkPos{ x, y, z });
 
-                // Option A: If chunk.blocks is already Box<[u16; CHUNK_VOLUME]> or compatible
-                // reuse or transfer ownership directly without converting block-by-block.
-                
-                // Option B: Zeroed stack allocation / direct buffer reuse
                 let mut blocks = Box::new([0u16; CHUNK_VOLUME]);
                 for (dst, src) in blocks.iter_mut().zip(chunk.blocks.iter()) {
                     *dst = src.0;

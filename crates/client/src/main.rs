@@ -1,14 +1,15 @@
-// crates/client/src/main.rs
 use net::{
-    check_archived_root, ArchivedServerPacket, ClientPacket, ServerPacket, UdpChannel,
+    check_archived_root, ClientPacket, ServerPacket, UdpChannel,
 };
 
-struct VoxelClient {
+use rkyv::Deserialize;
+
+struct ClientChannel {
     channel: UdpChannel,
     server_addr: String,
 }
 
-impl VoxelClient {
+impl ClientChannel {
     pub fn new(server_addr: &str) -> std::io::Result<Self> {
         Ok(Self {
             channel: UdpChannel::bind("127.0.0.1:0")?,
@@ -21,30 +22,35 @@ impl VoxelClient {
         self.channel.send_packet(&req, &self.server_addr)
     }
 
-    pub fn poll_network(&mut self) {
+    pub fn poll_network(&mut self) -> Option<ServerPacket> {
         if let Ok((aligned_payload, _)) = self.channel.recv_raw_payload() {
             if let Ok(archived) = check_archived_root::<ServerPacket>(&aligned_payload) {
-                match archived {
-                    ArchivedServerPacket::ChunkData { x, y, z, blocks } => {
-                        println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
-                        println!("   First Block: {}, Total Blocks: {}", blocks[0], blocks.len());
-                    }
-                    ArchivedServerPacket::Pong => {}
-                }
+                let packet = archived.deserialize(&mut rkyv::Infallible).unwrap();
+                return Some(packet);
             }
         }
+        None
     }
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🎮 Initializing Voxel Client...");
-    let mut client = VoxelClient::new("127.0.0.1:25565")?;
+    let mut client = ClientChannel::new("127.0.0.1:25565")?;
 
-    client.request_chunk(0, 0, 0)?;
+    client.request_chunk(0, 0, 0).unwrap();
     println!("📤 Chunk requested. Polling response...");
 
-    // Main Game Loop simulation
-    loop {
-        client.poll_network();
+    let packet = client.poll_network();
+
+    match packet {
+        Some(ServerPacket::ChunkData { x, y, z, blocks }) => {
+            println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
+            println!("   First Block: {}, Total Blocks: {}", blocks[0], blocks.len());
+        },
+        None => todo!(),
+        Some(ServerPacket::Pong) => todo!()
+
     }
+
+    Ok(())
 }
