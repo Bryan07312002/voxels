@@ -1,56 +1,79 @@
-use net::{
-    check_archived_root, ClientPacket, ServerPacket, UdpChannel,
-};
 
-use rkyv::Deserialize;
+mod components;
+mod plugins;
+mod resources;
 
-struct ClientChannel {
-    channel: UdpChannel,
-    server_addr: String,
+use bevy::prelude::*;
+use plugins::{PhysicsPlugin, PlayerPlugin, WorldPlugin};
+use resources::VoxelWorldConfig;
+
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Rust 3D Voxel Engine".into(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .init_resource::<VoxelWorldConfig>()
+        .add_plugins((WorldPlugin, PlayerPlugin, PhysicsPlugin))
+        .run();
 }
 
-impl ClientChannel {
-    pub fn new(server_addr: &str) -> std::io::Result<Self> {
-        Ok(Self {
-            channel: UdpChannel::bind("127.0.0.1:0")?,
-            server_addr: server_addr.to_string(),
-        })
-    }
-
-    pub fn request_chunk(&self, x: i32, y: i32, z: i32) -> std::io::Result<()> {
-        let req = ClientPacket::RequestChunk { x, y, z };
-        self.channel.send_packet(&req, &self.server_addr)
-    }
-
-    pub fn poll_network(&mut self) -> Option<ServerPacket> {
-        if let Ok((aligned_payload, _)) = self.channel.recv_raw_payload() {
-            if let Ok(archived) = check_archived_root::<ServerPacket>(&aligned_payload) {
-                let packet = archived.deserialize(&mut rkyv::Infallible).unwrap();
-                return Some(packet);
-            }
-        }
-        None
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🎮 Initializing Voxel Client...");
-    let mut client = ClientChannel::new("127.0.0.1:25565")?;
-
-    client.request_chunk(0, 0, 0).unwrap();
-    println!("📤 Chunk requested. Polling response...");
-
-    let packet = client.poll_network();
-
-    match packet {
-        Some(ServerPacket::ChunkData { x, y, z, blocks }) => {
-            println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
-            println!("   First Block: {}, Total Blocks: {}", blocks[0], blocks.len());
-        },
-        None => todo!(),
-        Some(ServerPacket::Pong) => todo!()
-
-    }
-
-    Ok(())
-}
+// use net::{
+//     check_archived_root, ClientPacket, ServerPacket, UdpChannel,
+// };
+//
+// use rkyv::Deserialize;
+//
+// struct ClientChannel {
+//     channel: UdpChannel,
+//     server_addr: String,
+// }
+//
+// impl ClientChannel {
+//     pub fn new(server_addr: &str) -> std::io::Result<Self> {
+//         Ok(Self {
+//             channel: UdpChannel::bind("127.0.0.1:0")?,
+//             server_addr: server_addr.to_string(),
+//         })
+//     }
+//
+//     pub fn request_chunk(&self, x: i32, y: i32, z: i32) -> std::io::Result<()> {
+//         let req = ClientPacket::RequestChunk { x, y, z };
+//         self.channel.send_packet(&req, &self.server_addr)
+//     }
+//
+//     pub fn poll_network(&mut self) -> Option<ServerPacket> {
+//         if let Ok((aligned_payload, _)) = self.channel.recv_raw_payload() {
+//             if let Ok(archived) = check_archived_root::<ServerPacket>(&aligned_payload) {
+//                 let packet = archived.deserialize(&mut rkyv::Infallible).unwrap();
+//                 return Some(packet);
+//             }
+//         }
+//         None
+//     }
+// }
+//
+// fn main() -> Result<(), Box<dyn std::error::Error>> {
+//     println!("🎮 Initializing Voxel Client...");
+//     let mut client = ClientChannel::new("127.0.0.1:25565")?;
+//
+//     client.request_chunk(0, 0, 0).unwrap();
+//     println!("📤 Chunk requested. Polling response...");
+//
+//     let packet = client.poll_network();
+//
+//     match packet {
+//         Some(ServerPacket::ChunkData { x, y, z, blocks }) => {
+//             println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
+//             println!("   First Block: {}, Total Blocks: {}", blocks[0], blocks.len());
+//         },
+//         None => todo!(),
+//         Some(ServerPacket::Pong) => todo!()
+//
+//     }
+//
+//     Ok(())
+// }

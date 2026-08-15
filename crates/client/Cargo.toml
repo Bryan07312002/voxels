@@ -12,3 +12,5 @@ mod_api = { path = "../mod_api" }
 render_pipeline = { path = "../render_pipeline" }
 
 rkyv = { version = "0.7", features = ["validation"] }
+
+bevy = "0.13"
