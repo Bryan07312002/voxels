@@ -7,22 +7,22 @@ pub struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PhysicsConfig>()
-            .add_systems(Update, (apply_gravity, resolve_collisions).chain());
+            .add_systems(Update, (resolve_collisions).chain());
     }
 }
 
-fn apply_gravity(
-    time: Res<Time>,
-    config: Res<PhysicsConfig>,
-    mut query: Query<(&mut Velocity, &Grounded)>,
-) {
-    let dt = time.delta_seconds();
-    for (mut velocity, grounded) in query.iter_mut() {
-        if !grounded.0 {
-            velocity.0.y += config.gravity * dt;
-        }
-    }
-}
+// fn apply_gravity(
+//     time: Res<Time>,
+//     config: Res<PhysicsConfig>,
+//     mut query: Query<(&mut Velocity, &Grounded)>,
+// ) {
+//     let dt = time.delta_seconds();
+//     for (mut velocity, grounded) in query.iter_mut() {
+//         if !grounded.0 {
+//             velocity.0.y += config.gravity * dt;
+//         }
+//     }
+// }
 
 fn resolve_collisions(
     time: Res<Time>,
@@ -31,7 +31,9 @@ fn resolve_collisions(
 ) {
     let dt = time.delta_seconds();
 
-    for (dyn_entity, mut transform, mut velocity, mut grounded, dyn_aabb) in dynamic_query.iter_mut() {
+    for (dyn_entity, mut transform, mut velocity, mut grounded, dyn_aabb) in
+        dynamic_query.iter_mut()
+    {
         grounded.0 = false;
 
         // --- 1. AXIS X RESOLUTION ---

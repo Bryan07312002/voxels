@@ -1,7 +1,7 @@
 use crate::components::{Aabb, FpsCamera, Grounded, Player, Velocity};
 use bevy::input::mouse::MouseMotion;
-use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 pub struct PlayerPlugin;
 
@@ -96,9 +96,9 @@ fn player_look(
 
 fn player_move(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut player_query: Query<(&Transform, &mut Velocity, &Grounded), With<Player>>,
+    mut player_query: Query<(&Transform, &mut Velocity), With<Player>>,
 ) {
-    let Ok((transform, mut velocity, grounded)) = player_query.get_single_mut() else {
+    let Ok((transform, mut velocity)) = player_query.get_single_mut() else {
         return;
     };
 
@@ -106,10 +106,11 @@ fn player_move(
     let forward = transform.forward();
     let right = transform.right();
 
-    // Flatten direction vectors so moving pitch doesn't change horizontal speed
+    // Flatten horizontal direction vectors
     let forward_planar = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
     let right_planar = Vec3::new(right.x, 0.0, right.z).normalize_or_zero();
 
+    // Horizontal Movement (WASD)
     if keyboard.pressed(KeyCode::KeyW) {
         move_dir += forward_planar;
     }
@@ -123,14 +124,17 @@ fn player_move(
         move_dir -= right_planar;
     }
 
+    // Vertical Movement (Space = Up, Shift = Down)
+    if keyboard.pressed(KeyCode::Space) {
+        move_dir += Vec3::Y;
+    }
+    if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+        move_dir -= Vec3::Y;
+    }
+
     let speed = 7.0;
     let move_vector = move_dir.normalize_or_zero() * speed;
 
-    velocity.0.x = move_vector.x;
-    velocity.0.z = move_vector.z;
-
-    // Jump
-    if keyboard.just_pressed(KeyCode::Space) && grounded.0 {
-        velocity.0.y = 8.5;
-    }
+    // Apply 3D movement to all axes
+    velocity.0 = move_vector;
 }

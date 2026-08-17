@@ -10,6 +10,7 @@ world_gen = { path = "../world_gen" }
 net = { path = "../net" }
 mod_api = { path = "../mod_api" }
 render_pipeline = { path = "../render_pipeline" }
+core_types = { path = "../core_types" }
 
 rkyv = { version = "0.7", features = ["validation"] }
 

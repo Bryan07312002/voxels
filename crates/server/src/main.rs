@@ -1,13 +1,12 @@
-use world_gen::{TerrainGenerator, FlatWorldGenerator};
 use core_types::ChunkPos;
-use std::net::SocketAddr;
 use net::{
-    check_archived_root, ArchivedClientPacket, ClientPacket, ServerPacket, UdpChannel,
-    CHUNK_VOLUME,
+    ArchivedClientPacket, CHUNK_VOLUME, ClientPacket, ServerPacket, UdpChannel, check_archived_root,
 };
+use std::{net::SocketAddr, thread, time::Duration};
+use world_gen::{FlatWorldGenerator, TerrainGenerator};
 
-struct VoxelServer {
-    channel: UdpChannel,
+pub struct VoxelServer {
+    pub channel: UdpChannel,
     generator: FlatWorldGenerator,
 }
 
@@ -20,21 +19,25 @@ impl VoxelServer {
     }
 
     pub fn run(&mut self) {
-        println!("Voxel UDP Server active!");
+        println!(
+            "Voxel UDP Server active on {}",
+            self.channel.socket.local_addr().unwrap()
+        );
 
         loop {
-            let (aligned_bytes, sender_addr) = match self.channel.recv_raw_payload() {
-                Ok(res) => res,
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            match self.channel.recv_raw_payload() {
+                Ok((aligned_bytes, sender_addr)) => {
+                    if let Ok(archived) = check_archived_root::<ClientPacket>(&aligned_bytes) {
+                        self.handle_packet(archived, sender_addr);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Prevent 100% CPU thread-spinning when idle
+                    thread::sleep(Duration::from_millis(1));
+                }
                 Err(err) => {
                     eprintln!("Network receive error: {err}");
-                    continue;
                 }
-            };
-
-            if let Ok(archived) = check_archived_root::<ClientPacket>(&aligned_bytes) {
-                self.handle_packet(archived, sender_addr);
             }
         }
     }
@@ -42,10 +45,11 @@ impl VoxelServer {
     fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
         match packet {
             ArchivedClientPacket::RequestChunk { x, y, z } => {
+                // Convert rkyv archived integers to native types
                 let (x, y, z) = (*x, *y, *z);
                 println!("📥 [Server] RequestChunk [{x}, {y}, {z}] from {sender}");
 
-                let chunk = self.generator.generate_chunk(ChunkPos{ x, y, z });
+                let chunk = self.generator.generate_chunk(ChunkPos { x, y, z });
 
                 let mut blocks = Box::new([0u16; CHUNK_VOLUME]);
                 for (dst, src) in blocks.iter_mut().zip(chunk.blocks.iter()) {

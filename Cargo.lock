@@ -1314,6 +1314,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "core_types",
  "engine_core",
  "mod_api",
  "net",
