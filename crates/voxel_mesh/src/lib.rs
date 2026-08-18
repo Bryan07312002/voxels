@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
-use core_types::{ CHUNK_SIZE,CHUNK_VOLUME };
+use core_types::{ BlockId, CHUNK_SIZE, CHUNK_VOLUME };
 
 const FACE_VERTICES: [[[f32; 3]; 4]; 6] = [
     // Top (+Y)
@@ -57,7 +57,7 @@ const FACE_NORMALS: [[f32; 3]; 6] = [
     [-1.0, 0.0, 0.0], // Left
 ];
 
-pub fn generate_chunk_mesh(blocks: &[u16; CHUNK_VOLUME], block_size: f32) -> Option<Mesh> {
+pub fn generate_chunk_mesh(blocks: &[BlockId; CHUNK_VOLUME], block_size: f32) -> Option<Mesh> {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
@@ -69,7 +69,7 @@ pub fn generate_chunk_mesh(blocks: &[u16; CHUNK_VOLUME], block_size: f32) -> Opt
         for lz in 0..cs {
             for lx in 0..cs {
                 let idx = (lx + (lz * cs) + (ly * cs * cs)) as usize;
-                if blocks[idx] == 0 {
+                if blocks[idx] == BlockId::AIR {
                     continue;
                 }
 
@@ -127,10 +127,11 @@ pub fn generate_chunk_mesh(blocks: &[u16; CHUNK_VOLUME], block_size: f32) -> Opt
 }
 
 #[inline]
-fn is_solid(blocks: &[u16; CHUNK_VOLUME], x: i32, y: i32, z: i32) -> bool {
+fn is_solid(blocks: &[BlockId; CHUNK_VOLUME], x: i32, y: i32, z: i32) -> bool {
     let cs = CHUNK_SIZE as i32;
     if x < 0 || x >= cs || y < 0 || y >= cs || z < 0 || z >= cs {
         return false;
     }
-    blocks[(x + (z * cs) + (y * cs * cs)) as usize] != 0
+
+    blocks[(x + (z * cs) + (y * cs * cs)) as usize] != BlockId::AIR
 }

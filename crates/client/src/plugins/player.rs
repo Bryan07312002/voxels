@@ -1,4 +1,5 @@
 use crate::components::{Aabb, FpsCamera, Grounded, Player, Velocity};
+use crate::plugins::world::NetworkClient;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
@@ -7,28 +8,46 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player)
-            .add_systems(Update, (handle_cursor_lock, player_look, player_move));
+        app.init_resource::<PositionSendTimer>()
+            .add_systems(Startup, spawn_player)
+            .add_systems(
+                Update,
+                (
+                    handle_cursor_lock,
+                    player_look,
+                    player_move,
+                    send_player_position,
+                ),
+            );
+    }
+}
+
+#[derive(Resource)]
+pub struct PositionSendTimer(pub Timer);
+
+impl Default for PositionSendTimer {
+    fn default() -> Self {
+        // Send position updates 25 times per second (every 40ms) for smooth chunk streaming
+        Self(Timer::from_seconds(0.04, TimerMode::Repeating))
     }
 }
 
 fn spawn_player(mut commands: Commands) {
-    // Player Root Body (Collider base at y = 5.0)
+    // Spawn player safely above the grass surface at y = 6.0
     commands
         .spawn((
             SpatialBundle {
-                transform: Transform::from_xyz(0.0, 5.0, 0.0),
+                transform: Transform::from_xyz(0.0, 7.5, 0.0),
                 ..default()
             },
             Player,
             Velocity::default(),
             Grounded(false),
             Aabb {
-                half_extents: Vec3::new(0.35, 0.9, 0.35), // Player dimensions: 0.7m x 1.8m x 0.7m
+                half_extents: Vec3::new(0.35, 0.9, 0.35),
             },
         ))
         .with_children(|parent| {
-            // First-person Camera offset at eye level
             parent.spawn((
                 Camera3dBundle {
                     transform: Transform::from_xyz(0.0, 0.6, 0.0),
@@ -128,13 +147,38 @@ fn player_move(
     if keyboard.pressed(KeyCode::Space) {
         move_dir += Vec3::Y;
     }
-    if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+
+    if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ShiftRight) {
         move_dir -= Vec3::Y;
     }
 
-    let speed = 7.0;
+    let speed = 100.0;
     let move_vector = move_dir.normalize_or_zero() * speed;
 
     // Apply 3D movement to all axes
     velocity.0 = move_vector;
+}
+
+fn send_player_position(
+    time: Res<Time>,
+    mut timer: ResMut<PositionSendTimer>,
+    player_query: Query<&Transform, With<Player>>,
+    net_client: Option<Res<NetworkClient>>,
+) {
+    let Some(net) = net_client else {
+        return;
+    };
+
+    // Tick the timer independent of frame-rate
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() {
+        return;
+    }
+
+    let Ok(transform) = player_query.get_single() else {
+        return;
+    };
+
+    let pos = transform.translation;
+    let _ = net.0.send_player_position(pos.x, pos.y, pos.z);
 }

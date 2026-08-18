@@ -1,18 +1,68 @@
-use core_types::{CHUNK_VOLUME, ChunkPos};
+use core_types::{CHUNK_SIZE, ChunkData, ChunkPos, compress_chunk_blocks};
 use net::{ArchivedClientPacket, ClientPacket, ServerPacket, UdpChannel, check_archived_root};
-use std::{net::SocketAddr, thread, time::Duration};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    net::SocketAddr,
+    thread,
+    time::{Duration, Instant},
+};
 use world_gen::{FlatWorldGenerator, TerrainGenerator};
+
+pub struct PendingChunk {
+    x: i32,
+    y: i32,
+    z: i32,
+    compressed_data: Vec<u8>,
+    last_sent: Instant,
+}
+
+pub struct ClientSession {
+    pub current_chunk: ChunkPos,
+    pub view_distance: i32,
+    pub loaded_chunks: HashSet<ChunkPos>,
+    pub send_queue: VecDeque<ChunkPos>,
+    pub pending_chunks: HashMap<ChunkPos, PendingChunk>, // Track un-acked chunks
+}
+
+impl ClientSession {
+    pub fn new(view_distance: i32) -> Self {
+        Self {
+            current_chunk: ChunkPos {
+                x: i32::MAX,
+                y: i32::MAX,
+                z: i32::MAX,
+            },
+            view_distance,
+            loaded_chunks: HashSet::new(),
+            send_queue: VecDeque::new(),
+            pending_chunks: HashMap::new(),
+        }
+    }
+}
 
 pub struct VoxelServer {
     pub channel: UdpChannel,
     generator: FlatWorldGenerator,
+    clients: HashMap<SocketAddr, ClientSession>,
+    world_cache: HashMap<ChunkPos, ChunkData>,
+    view_distance: i32,
 }
 
 impl VoxelServer {
-    pub fn new(bind_addr: &str, flat_world_height: i32) -> std::io::Result<Self> {
+    pub fn new(
+        bind_addr: &str,
+        flat_world_height: i32,
+        view_distance: i32,
+    ) -> std::io::Result<Self> {
+        let channel = UdpChannel::bind(bind_addr)?;
+        channel.socket.set_nonblocking(true)?;
+
         Ok(Self {
-            channel: UdpChannel::bind(bind_addr)?,
+            channel,
             generator: FlatWorldGenerator::new(flat_world_height),
+            clients: HashMap::new(),
+            world_cache: HashMap::new(),
+            view_distance,
         })
     }
 
@@ -23,49 +73,247 @@ impl VoxelServer {
         );
 
         loop {
-            match self.channel.recv_raw_payload() {
-                Ok((aligned_bytes, sender_addr)) => {
-                    if let Ok(archived) = check_archived_root::<ClientPacket>(&aligned_bytes) {
-                        self.handle_packet(archived, sender_addr);
+            // Drain incoming UDP packets
+            loop {
+                match self.channel.recv_raw_payload() {
+                    Ok((aligned_bytes, sender_addr)) => {
+                        if let Ok(archived) = check_archived_root::<ClientPacket>(&aligned_bytes) {
+                            self.handle_packet(archived, sender_addr);
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(err) => {
+                        eprintln!("Network receive error: {err}");
+                        break;
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // Prevent 100% CPU thread-spinning when idle
-                    thread::sleep(Duration::from_millis(1));
-                }
-                Err(err) => {
-                    eprintln!("Network receive error: {err}");
-                }
             }
+
+            // Stream queued chunks smoothly (2 chunks per iteration avoids buffer drops)
+            self.flush_chunk_queues(16);
+
+            thread::sleep(Duration::from_millis(2));
         }
     }
 
     fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
         match packet {
             ArchivedClientPacket::RequestChunk { x, y, z } => {
-                // Convert rkyv archived integers to native types
-                let (x, y, z) = (*x, *y, *z);
-                println!("📥 [Server] RequestChunk [{x}, {y}, {z}] from {sender}");
+                // If the client requested it, generate or retrieve blocks from world generator
+                let pos = ChunkPos {
+                    x: x.clone(),
+                    y: y.clone(),
+                    z: z.clone(),
+                };
 
-                let chunk = self.generator.generate_chunk(ChunkPos { x, y, z });
+                let chunk = self.generator.generate_chunk(pos);
 
-                let mut blocks = Box::new([0u16; CHUNK_VOLUME]);
-                for (dst, src) in blocks.iter_mut().zip(chunk.blocks.iter()) {
-                    *dst = src.0;
-                }
+                let compressed_blocks = compress_chunk_blocks(&chunk.blocks);
 
-                let response = ServerPacket::ChunkData { x, y, z, blocks };
-                if let Err(e) = self.channel.send_packet(&response, sender) {
-                    eprintln!("Failed to send chunk response to {sender}: {e}");
+                // Send compressed packet
+                let _ = self.channel.send_packet(
+                    &ServerPacket::ChunkDataCompressed {
+                        x: x.clone(),
+                        y: y.clone(),
+                        z: z.clone(),
+                        compressed_blocks: compressed_blocks.clone(),
+                    },
+                    sender,
+                );
+
+                // Track as pending until AckChunk is received
+                self.clients.get_mut(&sender).unwrap().pending_chunks.insert(
+                    pos,
+                    PendingChunk {
+                        x: pos.x,
+                        y: pos.y,
+                        z: pos.z,
+                        compressed_data: compressed_blocks,
+                        last_sent: Instant::now(),
+                    },
+                );
+            }
+            ArchivedClientPacket::PlayerPosition { x, y, z } => {
+                let world_pos = (*x, *y, *z);
+                self.update_player_position(sender, world_pos);
+            }
+            ArchivedClientPacket::AckChunk { x, y, z } => {
+                let pos = ChunkPos {
+                    x: x.clone(),
+                    y: y.clone(),
+                    z: z.clone(),
+                };
+
+                if let Some(session) = self.clients.get_mut(&sender) {
+                    session.pending_chunks.remove(&pos);
+                    session.loaded_chunks.insert(pos); // Now it is fully loaded!
                 }
             }
-            ArchivedClientPacket::PlayerPosition { .. } => {}
+        }
+    }
+
+    fn update_player_position(&mut self, sender: SocketAddr, (px, py, pz): (f32, f32, f32)) {
+        let cs = CHUNK_SIZE as f32;
+        let new_chunk_pos = ChunkPos {
+            x: (px / cs).floor() as i32,
+            y: (py / cs).floor() as i32,
+            z: (pz / cs).floor() as i32,
+        };
+
+        let view_dist = self.view_distance;
+        let session = self
+            .clients
+            .entry(sender)
+            .or_insert_with(|| ClientSession::new(view_dist));
+
+        if session.current_chunk == new_chunk_pos {
+            return;
+        }
+
+        session.current_chunk = new_chunk_pos;
+
+        let mut required_chunks = HashSet::new();
+        let r = session.view_distance;
+        let p_x = session.current_chunk.x;
+        let p_y = session.current_chunk.y;
+        let p_z = session.current_chunk.z;
+
+        // True 3D dynamic sphere around the player's current chunk in all directions
+        for dx in -r..=r {
+            for dy in -r..=r {
+                for dz in -r..=r {
+                    if dx * dx + dy * dy + dz * dz <= r * r {
+                        required_chunks.insert(ChunkPos {
+                            x: p_x + dx,
+                            y: p_y + dy, // Moves seamlessly up and down with you!
+                            z: p_z + dz,
+                        });
+                    }
+                }
+            }
+        }
+        // 1. PRUNE STALE QUEUE: Instantly drop any queued chunks you already flew past
+        session
+            .send_queue
+            .retain(|pos| required_chunks.contains(pos));
+
+        // 2. PRUNE STALE PENDING: Stop resending unacknowledged chunks you flew past!
+        session
+            .pending_chunks
+            .retain(|pos, _| required_chunks.contains(pos));
+
+        // Identify missing chunks not loaded, not queued, AND not currently pending
+        let mut to_load: Vec<ChunkPos> = required_chunks
+            .iter()
+            .filter(|pos| {
+                !session.loaded_chunks.contains(pos)
+                    && !session.send_queue.contains(pos)
+                    && !session.pending_chunks.contains_key(pos) // Ensure we don't re-queue it!
+            })
+            .copied()
+            .collect(); // Identify chunks outside view distance
+                        //
+        let to_unload: Vec<ChunkPos> = session
+            .loaded_chunks
+            .difference(&required_chunks)
+            .copied()
+            .collect();
+
+        // Process unloads immediately
+        for pos in to_unload {
+            session.loaded_chunks.remove(&pos);
+            let packet = ServerPacket::UnloadChunk {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+            };
+            let _ = self.channel.send_packet(&packet, sender);
+        }
+
+        // Sort nearest to farthest before queuing
+        to_load.sort_by_key(|pos| {
+            let dx = pos.x - new_chunk_pos.x;
+            let dz = pos.z - new_chunk_pos.z;
+            dx * dx + dz * dz
+        });
+
+        session.send_queue.extend(to_load);
+    }
+
+    fn flush_chunk_queues(&mut self, max_per_tick: usize) {
+        let now = std::time::Instant::now();
+
+        for (sender, session) in self.clients.iter_mut() {
+            let mut sent = 0;
+
+            // 1. Send new chunks from the queue
+            while sent < max_per_tick {
+                let Some(pos) = session.send_queue.pop_front() else {
+                    break;
+                };
+
+                let generator_ref = &self.generator;
+                let chunk = self
+                    .world_cache
+                    .entry(pos)
+                    .or_insert_with(|| generator_ref.generate_chunk(pos));
+
+                // OPTIMIZATION: Skip sending empty air chunks over UDP
+                let is_all_air = chunk.blocks.iter().all(|b| b.0 == 0);
+                if is_all_air {
+                    session.loaded_chunks.insert(pos); // Safe to mark loaded
+                    sent += 1;
+                    continue;
+                }
+
+                let compressed_blocks = compress_chunk_blocks(&chunk.blocks);
+
+                let response = ServerPacket::ChunkDataCompressed {
+                    x: pos.x,
+                    y: pos.y,
+                    z: pos.z,
+                    compressed_blocks: compressed_blocks.clone(),
+                };
+
+                if let Err(e) = self.channel.send_packet(&response, *sender) {
+                    eprintln!("Failed to send chunk {} {} {}: {}", pos.x, pos.y, pos.z, e);
+                } else {
+                    // RELIABILITY: Track this chunk as pending until the client ACKs it
+                    session.pending_chunks.insert(
+                        pos,
+                        PendingChunk {
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z,
+                            compressed_data: compressed_blocks,
+                            last_sent: now,
+                        },
+                    );
+                }
+
+                sent += 1;
+            }
+
+            // 2. Resend unacknowledged chunks (Reliable UDP)
+            let resend_timeout = std::time::Duration::from_millis(200);
+            for pending in session.pending_chunks.values_mut() {
+                if now.duration_since(pending.last_sent) > resend_timeout {
+                    let packet = ServerPacket::ChunkDataCompressed {
+                        x: pending.x,
+                        y: pending.y,
+                        z: pending.z,
+                        compressed_blocks: pending.compressed_data.clone(),
+                    };
+                    let _ = self.channel.send_packet(&packet, *sender);
+                    pending.last_sent = now; // Reset the timeout
+                }
+            }
         }
     }
 }
 
 fn main() -> std::io::Result<()> {
-    let mut server = VoxelServer::new("127.0.0.1:25565", 6)?;
+    let mut server = VoxelServer::new("127.0.0.1:25565", 6, 30)?;
     server.run();
     Ok(())
 }

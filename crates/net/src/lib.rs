@@ -15,16 +15,28 @@ const MAX_PAYLOAD_SIZE: usize = 1200; // MTU safe chunking size
 pub enum ClientPacket {
     RequestChunk { x: i32, y: i32, z: i32 },
     PlayerPosition { x: f32, y: f32, z: f32 },
+    AckChunk { x: i32, y: i32, z: i32 },
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub enum ServerPacket {
+    ChunkDataCompressed {
+        x: i32,
+        y: i32,
+        z: i32,
+        compressed_blocks: Vec<u8>,
+    },
     ChunkData {
         x: i32,
         y: i32,
         z: i32,
         blocks: Box<[u16; CHUNK_VOLUME]>,
+    },
+    UnloadChunk {
+        x: i32,
+        y: i32,
+        z: i32,
     },
     Pong,
 }
@@ -131,6 +143,23 @@ impl ClientChannel {
 
     pub fn request_chunk(&self, x: i32, y: i32, z: i32) -> std::io::Result<()> {
         let req = ClientPacket::RequestChunk { x, y, z };
+        let result = self.channel.send_packet(&req, self.server_addr);
+        if let Err(ref e) = result {
+            eprintln!("[Network] Failed to send request for chunk ({x}, {y}, {z}): {e}");
+        }
+        result
+    }
+
+    pub fn send_ack_chunk(&self, x: i32, y: i32, z: i32) {
+        let req = ClientPacket::AckChunk { x, y, z };
+        let result = self.channel.send_packet(&req, self.server_addr);
+        if let Err(ref e) = result {
+            eprintln!("[Network] Failed to send request for chunk ({x}, {y}, {z}): {e}");
+        }
+    }
+
+    pub fn send_player_position(&self, x: f32, y: f32, z: f32) -> std::io::Result<()> {
+        let req = ClientPacket::PlayerPosition { x, y, z };
         let result = self.channel.send_packet(&req, self.server_addr);
         if let Err(ref e) = result {
             eprintln!("[Network] Failed to send request for chunk ({x}, {y}, {z}): {e}");

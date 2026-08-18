@@ -17,7 +17,7 @@ impl FlatWorldGenerator {
 impl TerrainGenerator for FlatWorldGenerator {
     /// Generates a chunk at the given chunk grid coordinates (chunk_y determines vertical tier)
     fn generate_chunk(&self, pos: ChunkPos) -> ChunkData {
-        let mut chunk = ChunkData::new();
+        let mut chunk = ChunkData::default();
         let base_y = pos.y * CHUNK_SIZE as i32;
 
         let center = CHUNK_SIZE / 2;
