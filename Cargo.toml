@@ -1,3 +1,6 @@
+[toolchain]
+channel = "stable"
+
 [workspace]
 resolver = "2"
 members = [

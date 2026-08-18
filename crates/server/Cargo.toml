@@ -12,3 +12,5 @@ net = { path = "../net" }
 mod_api = { path = "../mod_api" }
 
 rkyv = { version = "0.7", features = ["validation"] }
+ratatui = "0.26"
+crossterm = "0.27"
