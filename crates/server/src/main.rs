@@ -1,7 +1,5 @@
-use core_types::ChunkPos;
-use net::{
-    ArchivedClientPacket, CHUNK_VOLUME, ClientPacket, ServerPacket, UdpChannel, check_archived_root,
-};
+use core_types::{CHUNK_VOLUME, ChunkPos};
+use net::{ArchivedClientPacket, ClientPacket, ServerPacket, UdpChannel, check_archived_root};
 use std::{net::SocketAddr, thread, time::Duration};
 use world_gen::{FlatWorldGenerator, TerrainGenerator};
 

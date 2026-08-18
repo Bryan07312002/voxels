@@ -2,12 +2,10 @@ use std::collections::BTreeMap;
 use std::net::ToSocketAddrs;
 use std::net::{SocketAddr, UdpSocket};
 
+use core_types::CHUNK_VOLUME;
 pub use rkyv::check_archived_root;
 use rkyv::{AlignedVec, Archive, Deserialize, Serialize};
 
-use core_types::CHUNK_SIZE;
-
-pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE; // 4096
 const MAX_PAYLOAD_SIZE: usize = 1200; // MTU safe chunking size
 
 // --- 1. Domain Packets ---

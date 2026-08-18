@@ -1321,6 +1321,7 @@ dependencies = [
  "physics",
  "render_pipeline",
  "rkyv",
+ "voxel_mesh",
  "world_gen",
 ]
 
@@ -3692,6 +3693,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voxel_mesh"
 version = "0.1.0"
 dependencies = [
+ "bevy",
  "core_types",
 ]
 

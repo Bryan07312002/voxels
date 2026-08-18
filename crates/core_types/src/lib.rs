@@ -1,9 +1,10 @@
-use std::fmt;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::fmt;
 
 pub const CHUNK_SIZE: usize = 16;
+pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
-#[repr(transparent)] 
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockId(pub u16);
 
@@ -18,7 +19,7 @@ impl fmt::Display for BlockId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BlockId: {}", self.0)
     }
-}  
+}
 
 /// A 16x16x16 local chunk grid stored in flat 1D memory
 #[derive(Debug, Clone)]

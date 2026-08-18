@@ -1,1 +1,1 @@
-cargo run -p client
+cargo run --release -p client

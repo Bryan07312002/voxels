@@ -2,7 +2,7 @@ mod components;
 mod plugins;
 mod resources;
 
-use bevy::prelude::*;
+use bevy::{prelude::*};
 use plugins::{PhysicsPlugin, PlayerPlugin, WorldPlugin};
 use resources::VoxelWorldConfig;
 
@@ -60,32 +60,12 @@ fn update_fps_ui(diagnostics: Res<DiagnosticsStore>, mut query: Query<&mut Text,
 }
 
 fn main() {
-    // let mut client = ClientChannel::new("127.0.0.1:25565").unwrap();
-    //
-    // client.request_chunk(0, 0, 0).unwrap();
-    // println!("📤 Chunk requested. Polling response...");
-    //
-    // let packet = client.poll_network();
-    //
-    // match packet {
-    //     Some(ServerPacket::ChunkData { x, y, z, blocks }) => {
-    //         println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
-    //         println!(
-    //             "   First Block: {}, Total Blocks: {}",
-    //             blocks[0],
-    //             blocks.len()
-    //         );
-    //     }
-    //     None => todo!(),
-    //     Some(ServerPacket::Pong) => todo!(),
-    // }
-
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Rust 3D Voxel Engine".into(),
                 name: Some("voxel_engine".into()),
-                present_mode: bevy::window::PresentMode::AutoVsync,
+                present_mode: bevy::window::PresentMode::Immediate,
                 ..default()
             }),
             ..default()
@@ -94,25 +74,3 @@ fn main() {
         .add_plugins((WorldPlugin, PlayerPlugin, PhysicsPlugin, FpsUiPlugin))
         .run();
 }
-
-//
-// fn main() -> Result<(), Box<dyn std::error::Error>> {
-//     let mut client = ClientChannel::new("127.0.0.1:25565")?;
-//
-//     client.request_chunk(0, 0, 0).unwrap();
-//     println!("📤 Chunk requested. Polling response...");
-//
-//     let packet = client.poll_network();
-//
-//     match packet {
-//         Some(ServerPacket::ChunkData { x, y, z, blocks }) => {
-//             println!("⚡ Received ChunkData [{}, {}, {}]!", x, y, z);
-//             println!("   First Block: {}, Total Blocks: {}", blocks[0], blocks.len());
-//         },
-//         None => todo!(),
-//         Some(ServerPacket::Pong) => todo!()
-//
-//     }
-//
-//     Ok(())
-// }

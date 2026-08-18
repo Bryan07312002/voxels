@@ -11,6 +11,7 @@ net = { path = "../net" }
 mod_api = { path = "../mod_api" }
 render_pipeline = { path = "../render_pipeline" }
 core_types = { path = "../core_types" }
+voxel_mesh = { path = "../voxel_mesh" }
 
 rkyv = { version = "0.7", features = ["validation"] }
 

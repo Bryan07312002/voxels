@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 core_types = { path = "../core_types" }
+
+bevy = "0.13"
