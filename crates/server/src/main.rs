@@ -12,9 +12,9 @@ fn main() -> std::io::Result<()> {
     let (tx_metrics, rx_metrics) = mpsc::channel();
 
     // Spawn the TUI on a separate thread
-    let tui_handle = spawn_tui_thread(rx_metrics);
+    let _ = spawn_tui_thread(rx_metrics);
 
-    let mut server = VoxelServer::new("127.0.0.1:25565", 6, 12, tx_metrics)?;
+    let mut server = VoxelServer::new("127.0.0.1:25565", 6, 8, tx_metrics)?;
     server.run();
     Ok(())
 }

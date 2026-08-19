@@ -13,6 +13,8 @@ render_pipeline = { path = "../render_pipeline" }
 core_types = { path = "../core_types" }
 voxel_mesh = { path = "../voxel_mesh" }
 
+# 3 party libs
 rkyv = { version = "0.7", features = ["validation"] }
-
 bevy = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"

@@ -1,6 +1,9 @@
 use crate::components::Player;
 use crate::resources::VoxelWorldConfig;
-use bevy::prelude::*;
+use bevy::{
+    pbr::wireframe::{Wireframe, WireframeColor},
+    prelude::*,
+};
 use core_types::{BlockId, CHUNK_SIZE, CHUNK_VOLUME, ChunkPos, decompress_chunk_blocks};
 use net::{ClientChannel, ServerPacket};
 use std::collections::HashMap;
@@ -80,18 +83,7 @@ fn poll_network_system(
     material: Res<ChunkMaterialHandle>,
     config: Res<VoxelWorldConfig>,
     mut loaded_chunks: ResMut<LoadedChunks>,
-    player_query: Query<&Transform, With<Player>>,
 ) {
-    let Ok(player_transform) = player_query.get_single() else {
-        return;
-    };
-    let p_pos = player_transform.translation;
-    let cs = CHUNK_SIZE as f32;
-    let player_chunk_x = (p_pos.x / cs).floor() as i32;
-    let player_chunk_y = (p_pos.y / cs).floor() as i32;
-    let player_chunk_z = (p_pos.z / cs).floor() as i32;
-    let max_radius = 15;
-
     while let Some(packet) = net_client.0.poll_network() {
         match packet {
             ServerPacket::ChunkDataCompressed {
@@ -188,7 +180,7 @@ fn client_chunk_request_and_unload(
 
     // Rate-limited missing chunk request pass
     let mut requests_sent = 0;
-    let max_requests_per_batch = 12; 
+    let max_requests_per_batch = 12;
 
     for dx in -max_radius..=max_radius {
         for dy in -max_radius..=max_radius {
@@ -238,12 +230,18 @@ fn spawn_chunk(
 
     Some(
         commands
-            .spawn(PbrBundle {
-                mesh: meshes.add(mesh),
-                material: material.0.clone(),
-                transform: Transform::from_translation(chunk_world_pos),
-                ..default()
-            })
+            .spawn((
+                PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: material.0.clone(),
+                    transform: Transform::from_translation(chunk_world_pos),
+                    ..default()
+                },
+                Wireframe,
+                WireframeColor {
+                    color: Color::BLACK,
+                },
+            ))
             .id(),
     )
 }
