@@ -68,7 +68,7 @@ where
 
             self.process_incoming_packets();
             self.tick();
-            self.flush_chunk_queues(16);
+            self.flush_chunk_queues(70);
             self.current_tick += 1;
 
             // Gather metrics snapshot
@@ -158,7 +158,7 @@ where
         }
     }
 
-fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
+    fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
         match packet {
             ArchivedClientPacket::Connect { view_distance } => {
                 println!(
@@ -190,29 +190,26 @@ fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
                 self.handle_update_player_position(sender, (*x, *y, *z));
             }
             ArchivedClientPacket::AckChunk { x, y, z } => {
-                self.handle_ack_chunk(x, y, z, sender);
+                self.handle_ack_chunk(*x, *y, *z, sender);
             }
             ArchivedClientPacket::Pong {} => {
-                // Handled implicitly by refreshing `last_active` above, 
+                // Handled implicitly by refreshing `last_active` above,
                 // but you can add explicit pong logging/logic here if needed.
                 session.last_pong_recived = Instant::now();
             }
-            ArchivedClientPacket::Connect { .. } => {
-                /* already connected */
-            }
+            ArchivedClientPacket::Connect { .. } => { /* already connected */ }
         }
     }
 
-    fn handle_ack_chunk(&mut self, x: &i32, y: &i32, z: &i32, sender: SocketAddr) {
-        let pos = ChunkPos {
-            x: x.clone(),
-            y: y.clone(),
-            z: z.clone(),
-        };
+    fn handle_ack_chunk(&mut self, x: i32, y: i32, z: i32, sender: SocketAddr) {
+        let pos = ChunkPos { x, y, z };
 
         if let Some(session) = self.clients.get_mut(&sender) {
-            session.pending_chunks.remove(&pos);
-            session.loaded_chunks.insert(pos);
+            // FIX: Only insert into loaded_chunks if it was actually in pending_chunks!
+            // If it was pruned because the player moved away, ignore the late ACK.
+            if session.pending_chunks.remove(&pos).is_some() {
+                session.loaded_chunks.insert(pos);
+            }
         }
     }
 
@@ -296,7 +293,7 @@ fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
         session
             .pending_chunks
             .retain(|pos, _| required_chunks.contains(pos));
-        //
+
         // Identify missing chunks not loaded, not queued, AND not currently pending
         let mut to_load: Vec<ChunkPos> = required_chunks
             .iter()
@@ -314,9 +311,11 @@ fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
             .copied()
             .collect();
 
-        // Process unloads immediately
         for pos in to_unload {
             session.loaded_chunks.remove(&pos);
+            session.pending_chunks.remove(&pos); // Ensure pending is cleared
+            session.send_queue.retain(|p| p != &pos); // Ensure queue is cleared
+
             let packet = ServerPacket::UnloadChunk {
                 x: pos.x,
                 y: pos.y,
@@ -336,10 +335,10 @@ fn handle_packet(&mut self, packet: &ArchivedClientPacket, sender: SocketAddr) {
     }
 
     pub fn flush_chunk_queues(&mut self, max_chunks_to_send_per_tick: usize) {
-        let now = std::time::Instant::now();
+        //let now = std::time::Instant::now();
 
         self.process_send_queues(max_chunks_to_send_per_tick);
-        self.process_chunk_timeouts(now);
+        //self.process_chunk_timeouts(now);
     }
 
     fn process_send_queues(&mut self, max_chunks_to_send_per_tick: usize) {

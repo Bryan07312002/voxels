@@ -2,10 +2,7 @@ use crate::ClientConfigRes;
 use crate::resources::VoxelWorldConfig;
 use crate::{components::Player, plugins::network::NetworkClient};
 
-use bevy::{
-    //pbr::wireframe::{Wireframe, WireframeColor},
-    prelude::*,
-};
+use bevy::prelude::*;
 
 use core_types::{BlockId, CHUNK_SIZE, CHUNK_VOLUME, ChunkPos, decompress_chunk_blocks};
 use net::ServerPacket;
@@ -15,8 +12,9 @@ use voxel_mesh::generate_chunk_mesh;
 #[derive(Resource)]
 pub struct ChunkMaterialHandle(pub Handle<StandardMaterial>);
 
+/// Maps chunk coordinates to an optional Entity (None if chunk is air only)
 #[derive(Resource, Default)]
-pub struct LoadedChunks(pub HashMap<ChunkPos, Entity>);
+pub struct LoadedChunks(pub HashMap<ChunkPos, Option<Entity>>);
 
 #[derive(Resource)]
 pub struct ChunkCheckTimer(pub Timer);
@@ -38,7 +36,7 @@ impl Plugin for WorldPlugin {
                 Update,
                 (
                     unload_distant_chunks,
-                    request_missing_chunks,
+                    // request_missing_chunks,
                     poll_network_system,
                 )
                     .chain(),
@@ -104,16 +102,18 @@ fn poll_network_system(
             }
             ServerPacket::UnloadChunk { x, y, z } => {
                 let pos = ChunkPos { x, y, z };
-                if let Some(entity) = loaded_chunks.0.remove(&pos) {
-                    commands.entity(entity).despawn_recursive();
+                // remove() returns Option<Option<Entity>>
+                if let Some(Some(entity)) = loaded_chunks.0.remove(&pos) {
+                    if let Some(cmd) = commands.get_entity(entity) {
+                        cmd.despawn_recursive();
+                    }
                 }
             }
             ServerPacket::Ping => {
-                let _ = net_client.0.send_pong().unwrap();
+                let _ = net_client.0.send_pong();
             }
             ServerPacket::ChunkData { .. } => {
                 warn!("Uncompressed chunk data packets are deprecated.");
-                panic!("AAAAAAAAAAAAAAAa");
             }
         }
     }
@@ -140,19 +140,25 @@ fn handle_chunk_compressed(
 
     let _ = net_client.0.send_ack_chunk(x, y, z);
 
-    if let Some(old_entity) = loaded_chunks.0.remove(&pos) {
-        commands.entity(old_entity).despawn_recursive();
+    // Despawn old entity if chunk was previously populated
+    if let Some(Some(old_entity)) = loaded_chunks.0.remove(&pos) {
+        if let Some(cmd) = commands.get_entity(old_entity) {
+            cmd.despawn_recursive();
+        }
     }
 
-    if let Some(entity) = spawn_chunk(commands, meshes, material, config, x, y, z, &blocks) {
-        loaded_chunks.0.insert(pos, entity);
-    }
+    // Spawn chunk (returns None for air chunks) and record in map
+    let entity = spawn_chunk(commands, meshes, material, config, x, y, z, &blocks);
+    loaded_chunks.0.insert(pos, entity);
 }
 
-fn get_player_chunk_pos(player_query: &Query<&Transform, With<Player>>) -> Option<ChunkPos> {
+fn get_player_chunk_pos(
+    player_query: &Query<&Transform, With<Player>>,
+    config: &VoxelWorldConfig,
+) -> Option<ChunkPos> {
     let transform = player_query.get_single().ok()?;
     let p_pos = transform.translation;
-    let cs = CHUNK_SIZE as f32;
+    let cs = (CHUNK_SIZE as f32) * config.block_size;
 
     Some(ChunkPos {
         x: (p_pos.x / cs).floor() as i32,
@@ -166,22 +172,30 @@ fn unload_distant_chunks(
     player_query: Query<&Transform, With<Player>>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     config: Res<ClientConfigRes>,
+    voxel_config: Res<VoxelWorldConfig>,
 ) {
-    let Some(player_chunk) = get_player_chunk_pos(&player_query) else {
+    let Some(player_chunk) = get_player_chunk_pos(&player_query, &voxel_config) else {
         return;
     };
 
-    let max_chunk_radius = config.0.view_distance.value() as i32;
+    // Buffer margin MUST be large (+6 chunks) so it only cleans up dropped packets
+    // and never fights the server's normal unload logic.
+    let fail_safe_margin = 6;
+    let max_chunk_radius = config.0.view_distance.value() as i32 + fail_safe_margin;
     let max_radius_sq = max_chunk_radius * max_chunk_radius;
 
-    loaded_chunks.0.retain(|pos, &mut entity| {
+    loaded_chunks.0.retain(|pos, maybe_entity| {
         let dx = pos.x - player_chunk.x;
         let dy = pos.y - player_chunk.y;
         let dz = pos.z - player_chunk.z;
 
         if (dx * dx + dy * dy + dz * dz) > max_radius_sq {
-            commands.entity(entity).despawn_recursive();
-            false
+            if let Some(entity) = *maybe_entity {
+                if let Some(cmd) = commands.get_entity(entity) {
+                    cmd.despawn_recursive();
+                }
+            }
+            false // Remove from loaded_chunks map
         } else {
             true
         }
@@ -195,13 +209,14 @@ fn request_missing_chunks(
     loaded_chunks: Res<LoadedChunks>,
     net_client: Res<NetworkClient>,
     config: Res<ClientConfigRes>,
+    voxel_config: Res<VoxelWorldConfig>,
 ) {
     timer.0.tick(time.delta());
     if !timer.0.just_finished() {
         return;
     }
 
-    let Some(player_chunk) = get_player_chunk_pos(&player_query) else {
+    let Some(player_chunk) = get_player_chunk_pos(&player_query, &voxel_config) else {
         return;
     };
 
@@ -259,18 +274,12 @@ fn spawn_chunk(
 
     Some(
         commands
-            .spawn((
-                PbrBundle {
-                    mesh: meshes.add(mesh),
-                    material: material.0.clone(),
-                    transform: Transform::from_translation(chunk_world_pos),
-                    ..default()
-                },
-                // Wireframe,
-                // WireframeColor {
-                //     color: Color::BLACK,
-                // },
-            ))
+            .spawn(PbrBundle {
+                mesh: meshes.add(mesh),
+                material: material.0.clone(),
+                transform: Transform::from_translation(chunk_world_pos),
+                ..default()
+            })
             .id(),
     )
 }
