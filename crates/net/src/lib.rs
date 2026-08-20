@@ -16,6 +16,7 @@ pub enum ClientPacket {
     RequestChunk { x: i32, y: i32, z: i32 },
     PlayerPosition { x: f32, y: f32, z: f32 },
     AckChunk { x: i32, y: i32, z: i32 },
+    Pong {},
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, Clone)]
@@ -38,7 +39,7 @@ pub enum ServerPacket {
         y: i32,
         z: i32,
     },
-    Pong,
+    Ping,
 }
 
 pub struct UdpChannel {
@@ -171,6 +172,18 @@ impl ClientChannel {
                 "[Network] Failed to send request for Connection ({:?}): {e}",
                 view_distance
             );
+        }
+
+        result
+    }
+
+    pub fn send_pong(&self) -> std::io::Result<()> {
+        let result = self
+            .channel
+            .send_packet(&ClientPacket::Pong {}, self.server_addr);
+
+        if let Err(ref e) = result {
+            eprintln!("[Network] cant pong the ping {e}",);
         }
 
         result

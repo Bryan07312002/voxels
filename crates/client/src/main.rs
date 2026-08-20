@@ -40,7 +40,7 @@ fn main() {
             PlayerPlugin,
             PhysicsPlugin,
             FpsUiPlugin,
-            WireframePlugin,
+            //WireframePlugin,
         ))
         .run();
 }

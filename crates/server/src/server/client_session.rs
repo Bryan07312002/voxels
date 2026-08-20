@@ -5,20 +5,14 @@ use std::{
 
 use core_types::{ChunkPos, ViewDistance};
 
-pub struct PendingChunk {
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub compressed_data: Vec<u8>,
-    pub last_sent: Instant,
-}
-
 pub struct ClientSession {
-    pub current_chunk: ChunkPos,
     pub view_distance: ViewDistance,
-    pub loaded_chunks: HashSet<ChunkPos>,
+    pub current_chunk: ChunkPos,
     pub send_queue: VecDeque<ChunkPos>,
-    pub pending_chunks: HashMap<ChunkPos, PendingChunk>, // Track un-acked chunks
+    pub loaded_chunks: HashSet<ChunkPos>,
+    pub pending_chunks: HashMap<ChunkPos, Instant>, // Track un-acked chunks
+    pub last_pong_recived: Instant,
+    pub last_ping_sent: Instant, // Tracks when the server last sent a Ping
 }
 
 impl ClientSession {
@@ -33,6 +27,8 @@ impl ClientSession {
             loaded_chunks: HashSet::new(),
             send_queue: VecDeque::new(),
             pending_chunks: HashMap::new(),
+            last_pong_recived: Instant::now(),
+            last_ping_sent: Instant::now(),
         }
     }
 }

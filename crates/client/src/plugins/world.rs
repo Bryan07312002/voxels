@@ -3,7 +3,7 @@ use crate::resources::VoxelWorldConfig;
 use crate::{components::Player, plugins::network::NetworkClient};
 
 use bevy::{
-    pbr::wireframe::{Wireframe, WireframeColor},
+    //pbr::wireframe::{Wireframe, WireframeColor},
     prelude::*,
 };
 
@@ -37,10 +37,11 @@ impl Plugin for WorldPlugin {
             .add_systems(
                 Update,
                 (
-                    poll_network_system,
                     unload_distant_chunks,
-                    //request_missing_chunks,
-                ),
+                    request_missing_chunks,
+                    poll_network_system,
+                )
+                    .chain(),
             );
     }
 }
@@ -107,9 +108,12 @@ fn poll_network_system(
                     commands.entity(entity).despawn_recursive();
                 }
             }
-            ServerPacket::Pong => {}
+            ServerPacket::Ping => {
+                let _ = net_client.0.send_pong().unwrap();
+            }
             ServerPacket::ChunkData { .. } => {
                 warn!("Uncompressed chunk data packets are deprecated.");
+                panic!("AAAAAAAAAAAAAAAa");
             }
         }
     }
@@ -262,10 +266,10 @@ fn spawn_chunk(
                     transform: Transform::from_translation(chunk_world_pos),
                     ..default()
                 },
-                Wireframe,
-                WireframeColor {
-                    color: Color::BLACK,
-                },
+                // Wireframe,
+                // WireframeColor {
+                //     color: Color::BLACK,
+                // },
             ))
             .id(),
     )

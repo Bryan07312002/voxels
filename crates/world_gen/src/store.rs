@@ -16,7 +16,8 @@ impl DiskChunkStore {
     }
 
     fn get_path(&self, pos: &ChunkPos) -> PathBuf {
-        self.base_path.join(format!("chunk_{}_{}_{}.bin", pos.x, pos.y, pos.z))
+        self.base_path
+            .join(format!("chunk_{}_{}_{}.bin", pos.x, pos.y, pos.z))
     }
 }
 
@@ -36,7 +37,10 @@ impl ChunkStore for DiskChunkStore {
     fn save(&self, pos: &ChunkPos, data: &ChunkData) {
         let path = self.get_path(pos);
         let bytes = unsafe {
-            std::slice::from_raw_parts(data as *const ChunkData as *const u8, std::mem::size_of::<ChunkData>())
+            std::slice::from_raw_parts(
+                data as *const ChunkData as *const u8,
+                std::mem::size_of::<ChunkData>(),
+            )
         };
         let _ = fs::write(path, bytes);
     }
