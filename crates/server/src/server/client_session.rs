@@ -3,7 +3,7 @@ use std::{
     time::Instant,
 };
 
-use core_types::ChunkPos;
+use core_types::{ChunkPos, ViewDistance};
 
 pub struct PendingChunk {
     pub x: i32,
@@ -15,14 +15,14 @@ pub struct PendingChunk {
 
 pub struct ClientSession {
     pub current_chunk: ChunkPos,
-    pub view_distance: i32,
+    pub view_distance: ViewDistance,
     pub loaded_chunks: HashSet<ChunkPos>,
     pub send_queue: VecDeque<ChunkPos>,
     pub pending_chunks: HashMap<ChunkPos, PendingChunk>, // Track un-acked chunks
 }
 
 impl ClientSession {
-    pub fn new(view_distance: i32) -> Self {
+    pub fn new(view_distance: ViewDistance) -> Self {
         Self {
             current_chunk: ChunkPos {
                 x: i32::MAX,

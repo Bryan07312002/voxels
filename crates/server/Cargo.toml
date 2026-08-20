@@ -10,6 +10,7 @@ physics = { path = "../physics" }
 world_gen = { path = "../world_gen" }
 net = { path = "../net" }
 mod_api = { path = "../mod_api" }
+config = { path = "../config" }
 
 rkyv = { version = "0.7", features = ["validation"] }
 ratatui = "0.26"

@@ -2,17 +2,17 @@ use std::collections::BTreeMap;
 use std::net::ToSocketAddrs;
 use std::net::{SocketAddr, UdpSocket};
 
-use core_types::CHUNK_VOLUME;
+use core_types::{CHUNK_VOLUME, ViewDistance};
 pub use rkyv::check_archived_root;
 use rkyv::{AlignedVec, Archive, Deserialize, Serialize};
 
 const MAX_PAYLOAD_SIZE: usize = 1200; // MTU safe chunking size
 
-// --- 1. Domain Packets ---
-
 #[derive(Archive, Serialize, Deserialize, Debug, Clone)]
 #[archive(check_bytes)]
+#[archive_attr(derive(Debug))]
 pub enum ClientPacket {
+    Connect { view_distance: ViewDistance },
     RequestChunk { x: i32, y: i32, z: i32 },
     PlayerPosition { x: f32, y: f32, z: f32 },
     AckChunk { x: i32, y: i32, z: i32 },
@@ -41,12 +41,8 @@ pub enum ServerPacket {
     Pong,
 }
 
-// --- 2. Abbreviated Low-Level Fragment Manager ---
-
-/// Handles sending and reassembling fragmented UDP packets transparently
 pub struct UdpChannel {
     pub socket: UdpSocket,
-    /// Pending incoming fragments grouped by total count key
     fragments: BTreeMap<u32, Vec<u8>>,
 }
 
@@ -164,6 +160,19 @@ impl ClientChannel {
         if let Err(ref e) = result {
             eprintln!("[Network] Failed to send request for chunk ({x}, {y}, {z}): {e}");
         }
+        result
+    }
+
+    pub fn send_connect(&self, view_distance: ViewDistance) -> std::io::Result<()> {
+        let req = ClientPacket::Connect { view_distance };
+        let result = self.channel.send_packet(&req, self.server_addr);
+        if let Err(ref e) = result {
+            eprintln!(
+                "[Network] Failed to send request for Connection ({:?}): {e}",
+                view_distance
+            );
+        }
+
         result
     }
 

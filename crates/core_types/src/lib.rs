@@ -1,6 +1,23 @@
 use rkyv::{Archive, Deserialize, Serialize};
 use std::fmt;
 
+#[derive(
+    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, Debug, Clone, Copy,
+)]
+#[archive(check_bytes)]
+#[archive_attr(derive(Debug))]
+#[serde(transparent)]
+pub struct ViewDistance(pub u16);
+
+impl ViewDistance {
+    pub fn value(&self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CompressedChunk(pub Vec<u8>);
+
 pub const CHUNK_SIZE: usize = 16;
 pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
@@ -24,13 +41,19 @@ impl fmt::Display for BlockId {
 ///  16x16x16 local chunk grid stored in flat 1D memory
 #[derive(Debug, Clone)]
 pub struct ChunkData {
-    pub blocks: [BlockId; CHUNK_VOLUME],
+    // these cant be pub since we need to check if was
+    // changed after beeing compressed and if so need to compress again
+    blocks: [BlockId; CHUNK_VOLUME],
+    compressed_chunk: Option<CompressedChunk>,
+    changed_since_compressed: bool,
 }
 
 impl ChunkData {
-    pub fn new() -> Self {
+    pub fn new(blocks: [BlockId; CHUNK_VOLUME], compressed_chunk: Option<CompressedChunk>) -> Self {
         Self {
-            blocks: [BlockId::AIR; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+            blocks,
+            compressed_chunk,
+            changed_since_compressed: false,
         }
     }
 
@@ -42,6 +65,28 @@ impl ChunkData {
     #[inline]
     pub fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId) {
         self.blocks[x + (z * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE)] = block;
+        if self.compressed_chunk.is_some() {
+            self.changed_since_compressed = true;
+        }
+    }
+
+    pub fn get_compressed_data(&mut self) -> CompressedChunk {
+        if let Some(ref compressed) = self.compressed_chunk {
+            if !self.changed_since_compressed {
+                return compressed.clone();
+            }
+        }
+
+        let compressed = compress_chunk_blocks(&self.blocks);
+
+        self.compressed_chunk = Some(compressed.clone());
+        self.changed_since_compressed = false;
+
+        compressed
+    }
+
+    pub fn is_all_air(&self) -> bool {
+        self.blocks.iter().all(|b| b.0 == 0)
     }
 }
 
@@ -49,6 +94,8 @@ impl Default for ChunkData {
     fn default() -> Self {
         Self {
             blocks: [BlockId::AIR; CHUNK_VOLUME],
+            compressed_chunk: None,
+            changed_since_compressed: false,
         }
     }
 }
@@ -78,10 +125,10 @@ impl ChunkPos {
 }
 
 /// Compresses a slice of `BlockId` chunk blocks into a run-length encoded byte vector.
-pub fn compress_chunk_blocks(blocks: &[BlockId; CHUNK_VOLUME]) -> Vec<u8> {
+pub fn compress_chunk_blocks(blocks: &[BlockId; CHUNK_VOLUME]) -> CompressedChunk {
     let mut compressed = Vec::new();
     if blocks.is_empty() {
-        return compressed;
+        return CompressedChunk(compressed);
     }
 
     let mut current_block = blocks[0];
@@ -101,7 +148,7 @@ pub fn compress_chunk_blocks(blocks: &[BlockId; CHUNK_VOLUME]) -> Vec<u8> {
     compressed.extend_from_slice(&current_block.0.to_le_bytes());
     compressed.extend_from_slice(&count.to_le_bytes());
 
-    compressed
+    CompressedChunk(compressed)
 }
 
 /// Decompresses RLE bytes back into a standard `[BlockId; CHUNK_VOLUME]` array.

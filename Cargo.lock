@@ -1329,6 +1329,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "config",
  "core_types",
  "engine_core",
  "mod_api",
@@ -1336,8 +1337,6 @@ dependencies = [
  "physics",
  "render_pipeline",
  "rkyv",
- "serde",
- "toml",
  "voxel_mesh",
  "world_gen",
 ]
@@ -1419,6 +1418,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "core_types",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -1512,6 +1520,8 @@ name = "core_types"
 version = "0.1.0"
 dependencies = [
  "rkyv",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -3406,6 +3416,7 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "config",
  "core_types",
  "crossterm",
  "engine_core",

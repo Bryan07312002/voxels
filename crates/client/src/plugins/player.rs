@@ -1,5 +1,5 @@
 use crate::components::{Aabb, FpsCamera, Grounded, Player, Velocity};
-use crate::plugins::world::NetworkClient;
+use crate::plugins::network::NetworkClient;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
@@ -152,7 +152,7 @@ fn player_move(
         move_dir -= Vec3::Y;
     }
 
-    let speed = 100.0;
+    let speed = 70.0;
     let move_vector = move_dir.normalize_or_zero() * speed;
 
     // Apply 3D movement to all axes
