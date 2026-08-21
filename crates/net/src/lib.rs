@@ -132,10 +132,16 @@ impl ClientChannel {
                 )
             })?;
 
-        Ok(Self {
-            channel: UdpChannel::bind("0.0.0.0:0")?,
-            server_addr: server_addr,
-        })
+        match UdpChannel::bind("0.0.0.0:0") {
+            Ok(channel) => Ok(Self {
+                channel: channel,
+                server_addr: server_addr,
+            }),
+            Err(e) => {
+                eprintln!("[Network] trying to bind to 0.0.0.0:0 {e}");
+                Err(e)
+            }
+        }
     }
 
     pub fn request_chunk(&self, x: i32, y: i32, z: i32) -> std::io::Result<()> {

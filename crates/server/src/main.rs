@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
         ServerConfig {
             host: String::from("127.0.0.1"),
             port: 25565,
-            max_view_distance: ViewDistance(12),
+            max_view_distance: ViewDistance(16),
         }
     });
 

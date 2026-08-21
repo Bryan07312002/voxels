@@ -17,7 +17,7 @@ fn main() {
     let config = load_client_config(Path::new("./config")).unwrap_or_else(|_| {
         warn!("No client.toml found or failed to load, using default config.");
         ClientConfig {
-            view_distance: core_types::ViewDistance(8),
+            view_distance: core_types::ViewDistance(16),
             wireframe: true,
         }
     });

@@ -1,4 +1,5 @@
 use std::sync::mpsc::Sender;
+use std::sync::{Mutex, OnceLock};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -12,6 +13,36 @@ use net::{ArchivedClientPacket, ClientPacket, ServerPacket, UdpChannel, check_ar
 use world_gen::{ChunkStore, TerrainGenerator, WorldManager};
 
 use crate::{metric_clients::ServerMetrics, server::client_session::ClientSession};
+
+/// Thread-safe cached table of relative spherical chunk offsets sorted by distance.
+fn get_sphere_offsets(radius: i32) -> &'static [ChunkPos] {
+    static OFFSET_CACHE: OnceLock<Mutex<HashMap<i32, &'static [ChunkPos]>>> = OnceLock::new();
+    let cache = OFFSET_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().unwrap();
+
+    *map.entry(radius).or_insert_with(|| {
+        let mut offsets = Vec::new();
+        let r_sq = radius * radius;
+        for dx in -radius..=radius {
+            for dy in -radius..=radius {
+                for dz in -radius..=radius {
+                    if dx * dx + dy * dy + dz * dz <= r_sq {
+                        offsets.push(ChunkPos {
+                            x: dx,
+                            y: dy,
+                            z: dz,
+                        });
+                    }
+                }
+            }
+        }
+        // Pre-sort offsets by distance squared from origin
+        offsets.sort_by_key(|pos| pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+
+        // Leak the vector into a &'static slice. Safe because radius values are bounded (e.g. 1..32)
+        Vec::leak(offsets)
+    })
+}
 
 pub struct VoxelServer<G, S>
 where
@@ -83,10 +114,8 @@ where
                 queue_size: total_queue,
             };
 
-            // Non-blocking send to TUI (ignores error if TUI thread exited)
             let _ = self.metrics_tx.send(snapshot);
 
-            // Sleep logic
             let now = Instant::now();
             if now < next_tick {
                 thread::sleep(next_tick - now);
@@ -98,8 +127,8 @@ where
 
     fn tick(&mut self) {
         let now = Instant::now();
-        let ping_interval = Duration::from_secs(3); // Server pings every 3 seconds
-        let timeout_duration = Duration::from_secs(10); // Drop if no response for 10 seconds
+        let ping_interval = Duration::from_secs(3);
+        let timeout_duration = Duration::from_secs(10);
 
         let mut timed_out_clients = Vec::new();
 
@@ -114,20 +143,12 @@ where
             }
         }
 
-        // Cleanly remove disconnected/timed-out clients
         for addr in timed_out_clients {
-            println!("Client {addr} timed out (no pong received). Disconnecting.");
+            println!("Client {addr} timed out. Disconnecting.");
             self.clients.remove(&addr);
         }
-
-        // Perform game simulation logic here (e.g., 20 times per second)
-        // - Update entity positions & physics
-        // - Process block changes / tile entities
-        // - Handle client timeouts (e.g., drop clients inactive for >10s)
     }
 
-    // get a clone of the chunk, changeing the returned chunk object will not
-    // change the chunk itself
     fn get_chunk_clone(&mut self, chunk_pos: ChunkPos) -> ChunkData {
         if let Some(chunk) = self.loaded_chunks.get(&chunk_pos) {
             return chunk.clone();
@@ -138,7 +159,7 @@ where
 
         self.loaded_chunks.insert(chunk_pos, chunk.clone());
 
-        return chunk;
+        chunk
     }
 
     fn process_incoming_packets(&mut self) {
@@ -173,13 +194,10 @@ where
             _ => {}
         }
 
-        // Ensure client is authenticated
         let Some(session) = self.clients.get_mut(&sender) else {
-            return; // Ignore packets from unauthenticated clients
+            return;
         };
 
-        // Any incoming packet from an authenticated client refreshes activity,
-        // specifically including the client's response to our server ping (Pong).
         session.last_pong_recived = Instant::now();
 
         match packet {
@@ -193,11 +211,9 @@ where
                 self.handle_ack_chunk(*x, *y, *z, sender);
             }
             ArchivedClientPacket::Pong {} => {
-                // Handled implicitly by refreshing `last_active` above,
-                // but you can add explicit pong logging/logic here if needed.
                 session.last_pong_recived = Instant::now();
             }
-            ArchivedClientPacket::Connect { .. } => { /* already connected */ }
+            ArchivedClientPacket::Connect { .. } => {}
         }
     }
 
@@ -205,8 +221,6 @@ where
         let pos = ChunkPos { x, y, z };
 
         if let Some(session) = self.clients.get_mut(&sender) {
-            // FIX: Only insert into loaded_chunks if it was actually in pending_chunks!
-            // If it was pruned because the player moved away, ignore the late ACK.
             if session.pending_chunks.remove(&pos).is_some() {
                 session.loaded_chunks.insert(pos);
             }
@@ -215,32 +229,27 @@ where
 
     fn handle_request_chunk(&mut self, x: &i32, y: &i32, z: &i32, sender: SocketAddr) {
         let pos = ChunkPos {
-            x: x.clone(),
-            y: y.clone(),
-            z: z.clone(),
+            x: *x,
+            y: *y,
+            z: *z,
         };
 
         let mut chunk = self.get_chunk_clone(pos);
-
         let compressed_blocks = chunk.get_compressed_data();
 
-        // Send compressed packet
         let _ = self.channel.send_packet(
             &ServerPacket::ChunkDataCompressed {
-                x: x.clone(),
-                y: y.clone(),
-                z: z.clone(),
+                x: *x,
+                y: *y,
+                z: *z,
                 compressed_blocks: compressed_blocks.0.clone(),
             },
             sender,
         );
 
-        // Track as pending until AckChunk is received
-        self.clients
-            .get_mut(&sender)
-            .unwrap()
-            .pending_chunks
-            .insert(pos, Instant::now());
+        if let Some(session) = self.clients.get_mut(&sender) {
+            session.pending_chunks.insert(pos, Instant::now());
+        }
     }
 
     fn handle_update_player_position(&mut self, sender: SocketAddr, (px, py, pz): (f32, f32, f32)) {
@@ -263,58 +272,32 @@ where
 
         session.current_chunk = new_chunk_pos;
 
-        let mut required_chunks = HashSet::new();
         let r = session.view_distance.0 as i32;
+        let r_sq = r * r;
         let p_x = session.current_chunk.x;
         let p_y = session.current_chunk.y;
         let p_z = session.current_chunk.z;
 
-        // True 3D dynamic sphere around the player's current chunk in all directions
-        for dx in -r..=r {
-            for dy in -r..=r {
-                for dz in -r..=r {
-                    if dx * dx + dy * dy + dz * dz <= r * r {
-                        required_chunks.insert(ChunkPos {
-                            x: p_x + dx,
-                            y: p_y + dy, // Moves seamlessly up and down with you!
-                            z: p_z + dz,
-                        });
-                    }
-                }
-            }
-        }
-
-        // 1. PRUNE STALE QUEUE: Instantly drop any queued chunks you already flew past
-        session
-            .send_queue
-            .retain(|pos| required_chunks.contains(pos));
-
-        // 2. PRUNE STALE PENDING: Stop resending unacknowledged chunks you flew past!
-        session
-            .pending_chunks
-            .retain(|pos, _| required_chunks.contains(pos));
-
-        // Identify missing chunks not loaded, not queued, AND not currently pending
-        let mut to_load: Vec<ChunkPos> = required_chunks
-            .iter()
-            .filter(|pos| {
-                !session.loaded_chunks.contains(pos)
-                    && !session.send_queue.contains(pos)
-                    && !session.pending_chunks.contains_key(pos) // Ensure we don't re-queue it!
-            })
-            .copied()
-            .collect(); // Identify chunks outside view distance
-
+        // 1. FAST UNLOAD DETECT: Check loaded chunks against scalar sphere equation (No HashSet needed!)
         let to_unload: Vec<ChunkPos> = session
             .loaded_chunks
-            .difference(&required_chunks)
-            .copied()
+            .iter()
+            .filter_map(|pos| {
+                let dx = pos.x - p_x;
+                let dy = pos.y - p_y;
+                let dz = pos.z - p_z;
+                if dx * dx + dy * dy + dz * dz > r_sq {
+                    Some(*pos)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for pos in to_unload {
             session.loaded_chunks.remove(&pos);
-            session.pending_chunks.remove(&pos); // Ensure pending is cleared
-            session.send_queue.retain(|p| p != &pos); // Ensure queue is cleared
+            session.pending_chunks.remove(&pos);
+            session.send_queue.retain(|p| p != &pos);
 
             let packet = ServerPacket::UnloadChunk {
                 x: pos.x,
@@ -324,21 +307,41 @@ where
             let _ = self.channel.send_packet(&packet, sender);
         }
 
-        to_load.sort_by_key(|pos| {
-            let dx = pos.x - new_chunk_pos.x;
-            let dy = pos.y - new_chunk_pos.y;
-            let dz = pos.z - new_chunk_pos.z;
-            dx * dx + dy * dy + dz * dz
+        // 2. FAST PRUNE: Strip send_queue and pending_chunks outside view distance
+        session.send_queue.retain(|pos| {
+            let dx = pos.x - p_x;
+            let dy = pos.y - p_y;
+            let dz = pos.z - p_z;
+            dx * dx + dy * dy + dz * dz <= r_sq
         });
 
-        session.send_queue.extend(to_load);
+        session.pending_chunks.retain(|pos, _| {
+            let dx = pos.x - p_x;
+            let dy = pos.y - p_y;
+            let dz = pos.z - p_z;
+            dx * dx + dy * dy + dz * dz <= r_sq
+        });
+
+        // 3. FAST LOAD ENQUEUE: Iterate pre-sorted offset table (No dynamic sorting or loop allocations!)
+        let offsets = get_sphere_offsets(r);
+        for rel in offsets {
+            let target_pos = ChunkPos {
+                x: p_x + rel.x,
+                y: p_y + rel.y,
+                z: p_z + rel.z,
+            };
+
+            if !session.loaded_chunks.contains(&target_pos)
+                && !session.pending_chunks.contains_key(&target_pos)
+                && !session.send_queue.contains(&target_pos)
+            {
+                session.send_queue.push_back(target_pos);
+            }
+        }
     }
 
     pub fn flush_chunk_queues(&mut self, max_chunks_to_send_per_tick: usize) {
-        //let now = std::time::Instant::now();
-
         self.process_send_queues(max_chunks_to_send_per_tick);
-        //self.process_chunk_timeouts(now);
     }
 
     fn process_send_queues(&mut self, max_chunks_to_send_per_tick: usize) {
@@ -376,42 +379,8 @@ where
 
             if let Err(e) = self.channel.send_packet(&response, sender) {
                 eprintln!("Failed to send chunk {} {} {}: {}", pos.x, pos.y, pos.z, e);
-            } else {
-                if let Some(session) = self.clients.get_mut(&sender) {
-                    session.pending_chunks.insert(pos, Instant::now());
-                }
-            }
-        }
-    }
-
-    fn process_chunk_timeouts(&mut self, now: std::time::Instant) {
-        let resend_timeout = std::time::Duration::from_millis(200);
-        let mut resend_tasks = Vec::new();
-
-        for (socket_addr, session) in &self.clients {
-            for (pos, timestamp) in &session.pending_chunks {
-                if now.duration_since(*timestamp) > resend_timeout {
-                    resend_tasks.push((*socket_addr, *pos));
-                }
-            }
-        }
-
-        for (socket_addr, pos) in resend_tasks {
-            let mut chunk = self.get_chunk_clone(pos);
-
-            let packet = ServerPacket::ChunkDataCompressed {
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-                compressed_blocks: chunk.get_compressed_data().0,
-            };
-
-            let _ = self.channel.send_packet(&packet, socket_addr);
-
-            if let Some(session) = self.clients.get_mut(&socket_addr) {
-                if let Some(timestamp) = session.pending_chunks.get_mut(&pos) {
-                    *timestamp = now;
-                }
+            } else if let Some(session) = self.clients.get_mut(&sender) {
+                session.pending_chunks.insert(pos, Instant::now());
             }
         }
     }
